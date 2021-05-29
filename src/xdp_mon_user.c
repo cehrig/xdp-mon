@@ -288,7 +288,7 @@ void ring_read(void *data)
 
     ring_buffer__consume(ring_buffer);
     ring_buffer__free(ring_buffer);
-    printf("%s: %d\n", if_name, pkt_count);
+    printf("%-4d%-16s%d\n", if_index, if_name, pkt_count);
 
     no_if:
     return;
