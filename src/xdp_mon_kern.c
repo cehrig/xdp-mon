@@ -8,7 +8,6 @@
 #include <time.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <strings.h>
 #include "common.h"
 
 struct bpf_map_def xdp_ringbuf SEC("maps") = {
@@ -19,26 +18,50 @@ struct bpf_map_def xdp_ringbuf SEC("maps") = {
 // handling IP
 int l3(t_in_pkt *pkt, void *data, void *data_end)
 {
-    switch (ntohs(((struct ethhdr *)data)->h_proto)) {
+    __be16 h_proto = ntohs(((struct ethhdr *)data)->h_proto);
+    __u8 ppp_len = 0;
+
+    if (ETH_P_PPP_SES == h_proto) {
+        if (data + ETH_HLEN + 8 > data_end) {
+            return XDP_PASS;
+        }
+
+        __be16 ppp_proto = ntohs(*((__be16 *)(data + ETH_HLEN + 6)));
+
+        switch (ppp_proto) {
+            case 0x0021:
+                h_proto = ETH_P_IP;
+                break;
+            case 0x0057:
+                h_proto = ETH_P_IPV6;
+                break;
+            default:
+                return XDP_PASS;
+        }
+
+        ppp_len = 8;
+    }
+
+    switch (h_proto) {
         case ETH_P_IP:
-            if (data + ETH_HLEN + sizeof(struct iphdr) > data_end) {
+            if (data + ETH_HLEN + ppp_len + sizeof(struct iphdr) > data_end) {
                 return XDP_PASS;
             }
 
-            struct iphdr *ip_hdr = (struct iphdr *)(data + ETH_HLEN);
+            struct iphdr *ip_hdr = (struct iphdr *)(data + ETH_HLEN + ppp_len);
             pkt->l3_proto = IPV4;
-            pkt->l3_proto_siz = sizeof(struct iphdr);
+            pkt->l3_proto_siz = ppp_len + sizeof(struct iphdr);
             pkt->l4_proto = ip_hdr->protocol;
-            pkt->v4_src = ip_hdr->saddr;
-            pkt->v4_dst = ip_hdr->daddr;
+            pkt->v4_src = ntohl(ip_hdr->saddr);
+            pkt->v4_dst = ntohl(ip_hdr->daddr);
 
             break;
         case ETH_P_IPV6:
-            if (data + ETH_HLEN + sizeof(struct ipv6hdr) > data_end) {
+            if (data + ETH_HLEN + ppp_len + sizeof(struct ipv6hdr) > data_end) {
                 return XDP_PASS;
             }
 
-            struct ipv6hdr *ip6_hdr = (struct ipv6hdr *)(data + ETH_HLEN);
+            struct ipv6hdr *ip6_hdr = (struct ipv6hdr *)(data + ETH_HLEN + ppp_len);
 
             // https://datatracker.ietf.org/doc/html/rfc2460.html#section-4.7
             if (ip6_hdr->nexthdr == 59) {
@@ -46,7 +69,7 @@ int l3(t_in_pkt *pkt, void *data, void *data_end)
             }
 
             pkt->l3_proto = IPV6;
-            pkt->l3_proto_siz = sizeof(struct ipv6hdr);
+            pkt->l3_proto_siz = ppp_len + sizeof(struct ipv6hdr);
 
             // not handling IPv6 Extension headers here ... so lazy
             pkt->l4_proto = ip6_hdr->nexthdr;
@@ -108,8 +131,9 @@ int xdp_prog(struct xdp_md *ctx)
     }
 
     t_in_pkt pkt;
-    bzero(&pkt, sizeof(t_in_pkt));
+    __builtin_memset(&pkt, 0, sizeof(t_in_pkt));
     pkt.l3_proto = IP_UNKNOWN;
+    pkt.ingress_ifindex = ctx->ingress_ifindex;
 
     if ((l_ret = l3(&pkt, data, data_end)) != -1) {
         return l_ret;
