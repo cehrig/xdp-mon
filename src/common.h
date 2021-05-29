@@ -9,13 +9,16 @@
 
 typedef enum in_pkt_proto {
     IP_UNKNOWN,
-    IPV4=0,
+#define IP_UNKNOWN 0
+    IPV4=1,
+#define IPV4 1
     IPV6
+#define IPV6 2
 } t_in_pkt_proto;
 
 // 52 bytes in size
 typedef struct in_pkt {
-    t_in_pkt_proto l3_proto;
+    __u8 l3_proto;
     __u8 l3_proto_siz;
     __u8 l4_proto;
     __u32 v4_src;
@@ -24,7 +27,7 @@ typedef struct in_pkt {
     struct in6_addr v6_dst;
     __u16 l4_src;
     __u16 l4_dest;
-} t_in_pkt;
+} __attribute__((packed)) t_in_pkt;
 
 typedef struct in_pkt_buf {
     t_in_pkt *pkt_buf;
