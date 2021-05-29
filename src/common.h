@@ -27,6 +27,7 @@ typedef struct in_pkt {
     struct in6_addr v6_dst;
     __u16 l4_src;
     __u16 l4_dest;
+    __u32 ingress_ifindex;
 } __attribute__((packed)) t_in_pkt;
 
 typedef struct in_pkt_buf {
