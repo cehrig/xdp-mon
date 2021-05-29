@@ -8,6 +8,7 @@
 #include <time.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
+#include <strings.h>
 #include "common.h"
 
 struct bpf_map_def xdp_ringbuf SEC("maps") = {
@@ -73,8 +74,8 @@ int l4(t_in_pkt *pkt, void *data, void *data_end)
 
             struct tcphdr *tcp_hdr = (struct tcphdr *)(data + ETH_HLEN + pkt->l3_proto_siz);
 
-            pkt->l4_src = tcp_hdr->source;
-            pkt->l4_dest = tcp_hdr->dest;
+            pkt->l4_src = ntohs(tcp_hdr->source);
+            pkt->l4_dest = ntohs(tcp_hdr->dest);
 
             break;
         case IPPROTO_UDP:
@@ -83,8 +84,8 @@ int l4(t_in_pkt *pkt, void *data, void *data_end)
             }
 
             struct udphdr *udp_hdr = (struct udphdr *)(data + ETH_HLEN + pkt->l3_proto_siz);
-            pkt->l4_src = udp_hdr->source;
-            pkt->l4_dest = udp_hdr->dest;
+            pkt->l4_src = ntohs(udp_hdr->source);
+            pkt->l4_dest = ntohs(udp_hdr->dest);
 
             break;
         default:
@@ -106,9 +107,9 @@ int xdp_prog(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    t_in_pkt pkt = {
-            .l3_proto = IP_UNKNOWN,
-    };
+    t_in_pkt pkt;
+    bzero(&pkt, sizeof(t_in_pkt));
+    pkt.l3_proto = IP_UNKNOWN;
 
     if ((l_ret = l3(&pkt, data, data_end)) != -1) {
         return l_ret;
