@@ -6,19 +6,12 @@
 
 #define IN_PKT_RING_NUM 1048576
 #define COMMS_PORT 35
-
-typedef enum in_pkt_proto {
-    IP_UNKNOWN,
 #define IP_UNKNOWN 0
-    IPV4=1,
-#define IPV4 1
-    IPV6
-#define IPV6 2
-} t_in_pkt_proto;
 
-// 52 bytes in size
+// 54 bytes in size
 typedef struct in_pkt {
-    __u8 l3_proto;
+    __u8 l3_passthru;
+    __u16 l3_proto;
     __u8 l3_proto_siz;
     __u8 l4_proto;
     __u32 v4_src;

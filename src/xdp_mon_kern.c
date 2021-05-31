@@ -15,10 +15,10 @@ struct bpf_map_def xdp_ringbuf SEC("maps") = {
     .max_entries = IN_PKT_RING_NUM,
 };
 
-// handling IP
+// handling PPP, IP, ARP
 int l3(t_in_pkt *pkt, void *data, void *data_end)
 {
-    __be16 h_proto = ntohs(((struct ethhdr *)data)->h_proto);
+    __u16 h_proto = ntohs(((struct ethhdr *)data)->h_proto);
     __u8 ppp_len = 0;
 
     if (ETH_P_PPP_SES == h_proto) {
@@ -26,7 +26,7 @@ int l3(t_in_pkt *pkt, void *data, void *data_end)
             return XDP_PASS;
         }
 
-        __be16 ppp_proto = ntohs(*((__be16 *)(data + ETH_HLEN + 6)));
+        __u16 ppp_proto = ntohs(*((__u16 *)(data + ETH_HLEN + 6)));
 
         switch (ppp_proto) {
             case 0x0021:
@@ -43,13 +43,20 @@ int l3(t_in_pkt *pkt, void *data, void *data_end)
     }
 
     switch (h_proto) {
+        case ETH_P_PPP_DISC:
+            pkt->l3_proto = h_proto;
+            goto l4;
+        case ETH_P_ARP:
+            pkt->l3_proto = h_proto;
+            goto l4;
         case ETH_P_IP:
             if (data + ETH_HLEN + ppp_len + sizeof(struct iphdr) > data_end) {
                 return XDP_PASS;
             }
 
             struct iphdr *ip_hdr = (struct iphdr *)(data + ETH_HLEN + ppp_len);
-            pkt->l3_proto = IPV4;
+            pkt->l3_passthru = 0;
+            pkt->l3_proto = ETH_P_IP;
             pkt->l3_proto_siz = ppp_len + sizeof(struct iphdr);
             pkt->l4_proto = ip_hdr->protocol;
             pkt->v4_src = ntohl(ip_hdr->saddr);
@@ -68,7 +75,8 @@ int l3(t_in_pkt *pkt, void *data, void *data_end)
                 return XDP_DROP;
             }
 
-            pkt->l3_proto = IPV6;
+            pkt->l3_passthru = 0;
+            pkt->l3_proto = ETH_P_IPV6;
             pkt->l3_proto_siz = ppp_len + sizeof(struct ipv6hdr);
 
             // not handling IPv6 Extension headers here ... so lazy
@@ -81,12 +89,17 @@ int l3(t_in_pkt *pkt, void *data, void *data_end)
             return XDP_PASS;
     }
 
+    l4:
     return -1;
 }
 
 // handling upper layer protocols. TCP and UDP for now
 int l4(t_in_pkt *pkt, void *data, void *data_end)
 {
+    if (pkt->l3_passthru) {
+        goto ringbuf;
+    }
+
     void * l3_end = data + ETH_HLEN + pkt->l3_proto_siz;
 
     switch (pkt->l4_proto) {
@@ -115,13 +128,14 @@ int l4(t_in_pkt *pkt, void *data, void *data_end)
             return XDP_PASS;
     }
 
+    ringbuf:
     return -1;
 }
 
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx)
 {
-    int l_ret;
+    int ret;
 
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
@@ -133,14 +147,16 @@ int xdp_prog(struct xdp_md *ctx)
     t_in_pkt pkt;
     __builtin_memset(&pkt, 0, sizeof(t_in_pkt));
     pkt.l3_proto = IP_UNKNOWN;
+    pkt.l3_passthru = 1;
+    pkt.l3_proto_siz = 0;
     pkt.ingress_ifindex = ctx->ingress_ifindex;
 
-    if ((l_ret = l3(&pkt, data, data_end)) != -1) {
-        return l_ret;
+    if ((ret = l3(&pkt, data, data_end)) != -1) {
+        return ret;
     }
 
-    if ((l_ret = l4(&pkt, data, data_end)) != -1) {
-        return l_ret;
+    if ((ret = l4(&pkt, data, data_end)) != -1) {
+        return ret;
     }
 
     if (bpf_ringbuf_output(&xdp_ringbuf, &pkt, sizeof(t_in_pkt), BPF_RB_NO_WAKEUP) < 0) {
